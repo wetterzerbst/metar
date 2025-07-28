@@ -1,0 +1,141 @@
+<?php
+$csvFile = "live.csv";
+$metarFile = "metar_data.txt";
+$debug = true;
+
+function fahrenheitToCelsius($fahrenheit) {
+    return is_numeric($fahrenheit) ? round(($fahrenheit - 32) * 5 / 9, 1) : null;
+}
+
+function inHgToHpa($inHg) {
+    return is_numeric($inHg) ? round($inHg * 33.8639) : null;
+}
+
+function mphToKnots($mph) {
+    return is_numeric($mph) ? round($mph * 0.868976) : 0;
+}
+
+// Präzise Taupunktberechnung nach Magnus (Sonntag-Formel)
+function calculateDewPointPrecise($tempC, $humidity) {
+    if (!is_numeric($tempC) || !is_numeric($humidity) || $humidity <= 0 || $humidity > 100) {
+        return null;
+    }
+
+    $a = 17.62;
+    $b = 243.12;
+    $gamma = log($humidity / 100) + ($a * $tempC) / ($b + $tempC);
+    return ($b * $gamma) / ($a - $gamma); // nicht gerundet
+}
+
+function loadCsvData($filePath, $debug = false) {
+    if (!file_exists($filePath)) {
+        if ($debug) echo "Fehler: CSV-Datei nicht gefunden ($filePath).<br>";
+        return null;
+    }
+
+    if (($handle = fopen($filePath, "r")) !== false) {
+        $header = fgetcsv($handle, 1000, ";");
+        $data = fgetcsv($handle, 1000, ";");
+        fclose($handle);
+
+        if ($header && $data) {
+            $combined = array_combine($header, $data);
+            if ($debug) {
+                echo "<pre>Geladene CSV-Daten:\n";
+                print_r($combined);
+                echo "</pre>";
+            }
+            return $combined;
+        }
+    }
+
+    if ($debug) echo "Fehler: CSV-Datei konnte nicht korrekt geladen werden.<br>";
+    return null;
+}
+
+function generateMetar($data, $debug = false) {
+    $stationId = "EDUZ";
+    $timestamp = strtotime($data["dateutc"] ?? "now");
+    $metarTime = gmdate("dHi", $timestamp) . "Z";
+
+    $tempC = fahrenheitToCelsius($data["tempf"] ?? null);
+    $humidity = $data["humidity"] ?? null;
+
+    $dewPointRaw = calculateDewPointPrecise($tempC, $humidity);
+    $dewPointRounded = is_numeric($dewPointRaw) ? round($dewPointRaw) : null;
+
+    // Temperatur & Taupunkt METAR-gerecht formatieren
+    $tempStr = is_numeric($tempC) ? (($tempC < 0 ? "M" : "") . str_pad(abs(round($tempC)), 2, "0", STR_PAD_LEFT)) : "//";
+    $dewPointStr = is_numeric($dewPointRounded) ? (($dewPointRounded < 0 ? "M" : "") . str_pad(abs($dewPointRounded), 2, "0", STR_PAD_LEFT)) : "//";
+
+    // Winddaten
+    $windDir = is_numeric($data["winddir"]) ? intval($data["winddir"]) : 0;
+    $windSpeedKT = mphToKnots($data["windspeedmph"] ?? 0);
+    $windGustKT = mphToKnots($data["windgustmph"] ?? 0);
+
+    if ($debug) {
+        echo "<pre>Winddaten:\n";
+        echo "Richtung: {$windDir}°\n";
+        echo "Mittel: {$windSpeedKT} kt\n";
+        echo "Böe: {$windGustKT} kt\n";
+        echo "Differenz: " . ($windGustKT - $windSpeedKT) . " kt\n</pre>";
+    }
+
+    if ($windSpeedKT === 0) {
+        $windStr = "00000KT";
+    } else {
+        $windStr = sprintf("%03d%02d", $windDir, $windSpeedKT);
+        if ($windGustKT > $windSpeedKT) {
+            $windStr .= sprintf("G%02d", $windGustKT);
+        }
+        $windStr .= "KT";
+    }
+
+    // Sichtweite bekannt nicht verfügbar – zulässig
+    $visibility = "////";
+
+    // Kein Wolkensensor → Feld komplett weglassen (nicht "////")
+    $cloudLayer = "";
+
+    // QNH
+    $pressureHpa = inHgToHpa($data["baromrelin"] ?? null);
+    $pressureStr = is_numeric($pressureHpa) ? "Q" . str_pad($pressureHpa, 4, "0", STR_PAD_LEFT) : "Q////";
+
+    // METAR zusammensetzen
+    $metar = sprintf(
+        "%s %s AUTO %s %s%s %s/%s %s",
+        $stationId,
+        $metarTime,
+        $windStr,
+        $visibility,
+        $cloudLayer ? " " . $cloudLayer : "", // nur wenn vorhanden
+        $tempStr,
+        $dewPointStr,
+        $pressureStr
+    );
+
+    if ($debug) {
+        echo "<pre>Finaler METAR:\n$metar</pre>";
+    }
+
+    return $metar;
+}
+
+function saveMetarToFile($metar, $filePath) {
+    if (file_put_contents($filePath, $metar) !== false) {
+        echo "METAR-Daten wurden erfolgreich gespeichert: $filePath<br>";
+    } else {
+        echo "Fehler: METAR-Daten konnten nicht gespeichert werden.<br>";
+    }
+}
+
+// Hauptlogik
+$data = loadCsvData($csvFile, $debug);
+if ($data) {
+    $metar = generateMetar($data, $debug);
+    echo $metar . "<br>";
+    saveMetarToFile($metar, $metarFile);
+} else {
+    echo "Fehler: CSV-Daten konnten nicht geladen werden.";
+}
+?>
