@@ -1,1 +1,1 @@
-Dieser Code wurde nach Vorgabe des METAR-Handbuches DWD erstellt. Dabei wird die Taupunktberechnung vor der Ausgabe des gerundesten METAR (Kommastellen werden abgeschnitten und es wird gerundet) nach BOLTON berechnet.
+Dieser Code wurde nach Vorgabe des METAR-Handbuches DWD erstellt. Dabei wird die Taupunktberechnung vor der Ausgabe des METAR (Kommastellen werden abgeschnitten und es wird gerundet) nach BOLTON berechnet.
